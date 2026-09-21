@@ -1,0 +1,9 @@
+# Fetched data — snapshots are large and re-derivable; commit deliberately.
+data/
+*.partial
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.DS_Store
