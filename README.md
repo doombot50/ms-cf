@@ -67,16 +67,12 @@ fields.
 
 ## Getting the data
 
-### On GitHub Actions (no setup)
-
-The **Fetch data** workflow runs the pull on GitHub's runners and attaches the
-CSVs to the run as a downloadable artifact (`ms-campaign-finance`, kept 30
-days). Run it from the Actions tab with **Run workflow**. `full` is the default;
-`probe` and `discover` are quick checks. It also runs by itself whenever
-`fetch_ms_cf.py` changes, so edits to the request or parsing code are tested
-against the live portal, not only against fixtures.
-
-### Locally
+**Run it from a regular home or office connection.** The whole `sos.ms.gov`
+domain sits behind Akamai, which refuses cloud and datacenter addresses.
+GitHub's hosted runners get `403 Access Denied` even for the SOS homepage when
+they send browser-standard headers, so the block is about where a request comes
+from, not how it's made. If your network is refused too, the fetcher exits with
+one line that names the block and gives Akamai's reference number.
 
 Python 3.8+, no third-party packages.
 
@@ -171,11 +167,18 @@ and expenditures ingestion diaries, which used exactly these endpoints to build
 [The Accountability Project's Mississippi dataset](https://publicaccountability.org/datasets/396/mississippi-cont/)
 (153,241 contributions, data through early 2023).
 
-The live endpoint is exercised by the **Fetch data** workflow. The sandbox this
-repo was authored in cannot reach `cfportal.sos.ms.gov`, but Actions runners can.
+**The live endpoint has not been exercised from this repo yet.** Neither the
+sandbox it was authored in nor GitHub's hosted runners can reach `sos.ms.gov`
+(see *Getting the data*), so the first real run will be from a regular
+connection. Start with `--probe`.
 
 ## Next steps
 
+- **First real pull, from a regular connection:** `--probe`, then `both`. Its
+  date range settles whether anything after July 2023, such as the system
+  announced for 2026, comes through the API. The Accountability Project's
+  [published copy](https://publicaccountability.org/datasets/396/mississippi-cont/)
+  of the contributions, through early 2023, is a ready cross-check for row counts.
 - **Post-2023 filings are PDFs.** Whether they can become numbers depends on
   what the PDFs are: typed or form-generated PDFs with a text layer can be
   parsed with pdfplumber, the way the Louisiana project's `fetch_ethics_coh.py`
@@ -186,5 +189,6 @@ repo was authored in cannot reach `cfportal.sos.ms.gov`, but Actions runners can
   the PDFs) and add the useful ones to `DATASETS`.
 - Entity normalization (contributor/recipient name keys, address cleanup), fit
   to the real data's mess rather than guessed in advance.
-- A nightly schedule for **Fetch data**, once it's clear whether anything new
-  still arrives through the API.
+- Automation. A scheduled pull would need a self-hosted runner on a
+  non-datacenter connection, since hosted runners are refused. It's low
+  priority while the electronic data is mostly a closed 2016–2023 archive.

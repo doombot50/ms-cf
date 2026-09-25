@@ -21,10 +21,14 @@ python3 fetch_ms_cf.py discover              # list the ASMX service's operation
 python3 -m unittest discover -s tests -v     # 50 tests, no network needed
 ```
 
-**Sandboxed sessions usually cannot reach `cfportal.sos.ms.gov`.** To exercise the
-live portal, push a change to `fetch_ms_cf.py` (which triggers the *Fetch data*
-workflow, `.github/workflows/fetch-data.yml`) or dispatch that workflow, then read
-its job logs. Actions runners have open egress.
+**Nothing cloud-hosted can reach the portal.** The whole `sos.ms.gov` domain is
+behind Akamai, which answers `403 Access Denied` to datacenter addresses. That
+was confirmed from GitHub's hosted runners on 2026-09-25: both `cfportal.` and
+`www.sos.ms.gov` were refused with browser-standard headers. Sandboxed sessions
+are also blocked by their own egress policy. Live runs happen on the user's
+machine. Do not try to route around the block with proxies, IP rotation or
+client fingerprint spoofing; it is a deliberate access control. Verify changes
+with fixture-backed tests, and ask the user to run `--probe` for live checks.
 
 ## The data source
 

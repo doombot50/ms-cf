@@ -1,7 +1,7 @@
 # CI — unit tests on every push / PR.
 #
 # The suite stubs the transport, so it needs no network and no data. The live
-# portal is exercised separately by fetch-data.yml.
+# portal can't be tested from here: sos.ms.gov refuses GitHub's hosted runners.
 name: CI
 
 on:
