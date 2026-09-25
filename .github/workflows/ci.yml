@@ -1,0 +1,31 @@
+# CI — unit tests on every push / PR.
+#
+# The suite stubs the transport, so it needs no network and no data. The live
+# portal can't be tested from here: sos.ms.gov refuses GitHub's hosted runners.
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Python unit tests
+        run: python3 -m unittest discover -s tests -p 'test_*.py' -v

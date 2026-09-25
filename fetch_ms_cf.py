@@ -38,7 +38,11 @@ Usage
     python3 fetch_ms_cf.py both --begin 01/01/2016 --chunk-years 1
 
     # Look before you leap: one narrow window, print the schema, write nothing.
-    python3 fetch_ms_cf.py contributions --probe --begin 01/01/2024 --end 01/31/2024
+    # Pick a window inside the Oct 2016 - Jul 2023 online-filing era.
+    python3 fetch_ms_cf.py contributions --probe --begin 01/01/2022 --end 02/28/2022
+
+    # List every operation the service publishes, with its request fields.
+    python3 fetch_ms_cf.py discover
 """
 
 import argparse
@@ -53,6 +57,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+import xml.etree.ElementTree as ET
 
 BASE = "https://cfportal.sos.ms.gov"
 PORTAL_URL = f"{BASE}/online/portal/cf/page/cf-search/Portal.aspx"
@@ -100,13 +105,36 @@ MONEY_FIELDS = {"amount", "amount_paid", "in_kind_amount"}
 # ──────────────────────────────────────────────────────────────────────────
 # HTTP
 # ──────────────────────────────────────────────────────────────────────────
+def describe_http_error(err):
+    """One line from an HTTPError: status, Server header, start of the body text.
+
+    A bare "403 Forbidden" can't distinguish a malformed request from a firewall
+    block; the server name and the block page's own text usually can.
+    """
+    server = (err.headers.get("Server") if err.headers else None) or "?"
+    try:
+        body = err.read()[:4000].decode("utf-8", "replace")
+    except Exception:
+        body = ""
+    text = re.sub(r"<(script|style)\b.*?</\1>", " ", body, flags=re.S | re.I)
+    text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", text)).strip()[:300]
+    return f"HTTP {err.code} {err.reason} (server: {server})" + (f": {text}" if text else "")
+
+
 def open_session(timeout=90):
     """GET the portal page so the ASMX service sees a real ASP.NET session."""
     jar = http.cookiejar.CookieJar()
     opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
-    opener.addheaders = [("User-Agent", UA)]
-    with opener.open(PORTAL_URL, timeout=timeout) as r:
-        r.read()
+    opener.addheaders = [
+        ("User-Agent", UA),
+        ("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"),
+        ("Accept-Language", "en-US,en;q=0.9"),
+    ]
+    try:
+        with opener.open(PORTAL_URL, timeout=timeout) as r:
+            r.read()
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"portal refused the session request: {describe_http_error(e)}") from None
     if not len(jar):
         print("  ! portal set no cookies; continuing anyway", file=sys.stderr)
     return opener
@@ -127,18 +155,57 @@ def post_search(opener, endpoint, body, timeout=600, retries=4):
         try:
             with opener.open(req, timeout=timeout) as r:
                 return r.read()
-        except (urllib.error.URLError, urllib.error.HTTPError, OSError) as e:
-            if isinstance(e, urllib.error.HTTPError) and e.code in (400, 500):
-                # A 500 from ASMX usually carries a readable fault — surface it.
-                detail = e.read()[:800].decode("utf-8", "replace")
-                raise RuntimeError(f"{endpoint} HTTP {e.code}: {detail}") from None
-            if attempt == retries:
-                raise
-            print(f"  ! {type(e).__name__}: {e} — retry {attempt}/{retries - 1} in {delay}s",
-                  file=sys.stderr)
-            time.sleep(delay)
-            delay *= 2
+        except urllib.error.HTTPError as e:
+            # A 4xx won't change on retry, and a 500 from ASMX is a fault whose body
+            # says what went wrong. Only gateway-style errors are worth another try.
+            if e.code not in (502, 503, 504):
+                raise RuntimeError(f"{endpoint}: {describe_http_error(e)}") from None
+            err = e
+        except (urllib.error.URLError, OSError) as e:
+            err = e
+        if attempt == retries:
+            raise err
+        print(f"  ! {type(err).__name__}: {err} — retry {attempt}/{retries - 1} in {delay}s",
+              file=sys.stderr)
+        time.sleep(delay)
+        delay *= 2
     raise RuntimeError("unreachable")
+
+
+def fetch_wsdl(opener, timeout=90):
+    try:
+        with opener.open(f"{SERVICE}?WSDL", timeout=timeout) as r:
+            return r.read()
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"WSDL: {describe_http_error(e)}") from None
+
+
+_WSDL = "{http://schemas.xmlsoap.org/wsdl/}"
+_XSD = "{http://www.w3.org/2001/XMLSchema}"
+
+
+def parse_wsdl(xml_bytes):
+    """
+    Map each operation an ASMX WSDL publishes to its request field names.
+
+    ASMX emits one portType per protocol (Soap, HttpGet, HttpPost), each repeating
+    the same operations, so names are de-duplicated in first-seen order.  Requests
+    are document/literal: the schema element named after the operation wraps a
+    flat sequence of the fields.
+    """
+    root = ET.fromstring(xml_bytes)
+    fields = {}
+    for schema in root.iter(f"{_XSD}schema"):
+        for el in schema.findall(f"{_XSD}element"):
+            seq = el.find(f"{_XSD}complexType/{_XSD}sequence")
+            fields[el.get("name")] = [] if seq is None else [
+                child.get("name") for child in seq.findall(f"{_XSD}element") if child.get("name")
+            ]
+    ops = {}
+    for port_type in root.iter(f"{_WSDL}portType"):
+        for op in port_type.findall(f"{_WSDL}operation"):
+            ops.setdefault(op.get("name"), fields.get(op.get("name"), []))
+    return ops
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -259,6 +326,13 @@ def columns_of(records):
     return cols
 
 
+def date_span(records):
+    """(earliest, latest) ISO date across records, or None if none parsed."""
+    dates = sorted(r["date"] for r in records
+                   if re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(r.get("date", ""))))
+    return (dates[0], dates[-1]) if dates else None
+
+
 # ──────────────────────────────────────────────────────────────────────────
 # Output
 # ──────────────────────────────────────────────────────────────────────────
@@ -347,7 +421,7 @@ def fetch(dataset, args, opener):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("dataset", choices=["contributions", "expenditures", "both"])
+    ap.add_argument("dataset", choices=["contributions", "expenditures", "both", "discover"])
     ap.add_argument("--begin", help="BeginDate filter, MM/DD/YYYY")
     ap.add_argument("--end", help="EndDate filter, MM/DD/YYYY")
     ap.add_argument("--chunk-years", type=int, default=0,
@@ -361,11 +435,10 @@ def main(argv=None):
     ap.add_argument("--sleep", type=float, default=1.0, help="pause between chunked requests")
     args = ap.parse_args(argv)
 
-    if args.chunk_years and not (args.begin and args.end):
-        if args.chunk_years and args.begin and not args.end:
-            args.end = dt.date.today().strftime("%m/%d/%Y")
-        else:
-            ap.error("--chunk-years needs --begin (and --end, defaulted to today)")
+    if args.chunk_years:
+        if not args.begin:
+            ap.error("--chunk-years needs --begin (--end defaults to today)")
+        args.end = args.end or dt.date.today().strftime("%m/%d/%Y")
 
     targets = ["contributions", "expenditures"] if args.dataset == "both" else [args.dataset]
     os.makedirs(args.out_dir, exist_ok=True)
@@ -373,10 +446,21 @@ def main(argv=None):
     print(f"Opening portal session: {PORTAL_URL}")
     opener = open_session()
 
+    if args.dataset == "discover":
+        wsdl = fetch_wsdl(opener, timeout=args.timeout)
+        ops = parse_wsdl(wsdl)
+        print(f"{SERVICE} publishes {len(ops)} operations:")
+        for name, fields in ops.items():
+            print(f"  {name}({', '.join(fields)})")
+        print(f"  wrote {write_raw(wsdl, os.path.join(args.out_dir, 'ms_service.wsdl'))}")
+        return 0
+
     for dataset in targets:
         rows, raw_parts = fetch(dataset, args, opener)
         records = normalize(rows)
-        print(f"  {dataset}: {len(records):,} records, {len(columns_of(records))} columns")
+        span = date_span(records)
+        print(f"  {dataset}: {len(records):,} records, {len(columns_of(records))} columns"
+              + (f", dated {span[0]} → {span[1]}" if span else ""))
 
         if args.probe:
             print(f"  columns: {', '.join(columns_of(records))}")
@@ -397,4 +481,7 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except RuntimeError as e:
+        sys.exit(f"error: {e}")

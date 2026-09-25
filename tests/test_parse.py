@@ -164,6 +164,15 @@ class TestNormalize(unittest.TestCase):
         self.assertEqual(ms.columns_of(recs), ["date", "amount", "filer", "year"])
 
 
+class TestDateSpan(unittest.TestCase):
+    def test_ignores_blank_and_unparsed_dates(self):
+        recs = [{"date": "2020-01-15"}, {"date": ""}, {"date": "2019-07-04"}, {"date": "N/A"}, {}]
+        self.assertEqual(ms.date_span(recs), ("2019-07-04", "2020-01-15"))
+
+    def test_none_when_nothing_parsed(self):
+        self.assertIsNone(ms.date_span([{"date": ""}, {}]))
+
+
 class TestWriters(unittest.TestCase):
     def test_csv_roundtrip(self):
         recs = ms.normalize(CONTRIB_ROWS)
@@ -264,6 +273,20 @@ class TestEndToEnd(unittest.TestCase):
             with open(os.path.join(tmp, "ms_contributions.csv"), newline="") as fh:
                 rows = list(_csv.DictReader(fh))
         self.assertEqual(len(rows), 6)
+
+    def test_chunk_years_without_begin_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp, self.assertRaises(SystemExit):
+            ms.main(["contributions", "--out-dir", tmp, "--chunk-years", "1"])
+        self.assertEqual(self.calls, [])
+
+    def test_chunk_years_end_defaults_to_today(self):
+        import datetime as _dt
+        today = _dt.date.today()
+        begin = today.replace(month=1, day=1).strftime("%m/%d/%Y")
+        with tempfile.TemporaryDirectory() as tmp:
+            ms.main(["contributions", "--out-dir", tmp, "--format", "csv", "--sleep", "0",
+                     "--begin", begin, "--chunk-years", "1"])
+        self.assertEqual(self.calls[-1][2], today.strftime("%m/%d/%Y"))
 
     def test_probe_writes_nothing(self):
         with tempfile.TemporaryDirectory() as tmp:

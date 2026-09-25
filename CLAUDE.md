@@ -16,11 +16,27 @@ artifacts on disk, atomic writes, retry with exponential backoff.
 
 ```bash
 python3 fetch_ms_cf.py both                  # full pull → data/
-python3 fetch_ms_cf.py contributions --probe --begin 01/01/2024 --end 01/31/2024
-python3 -m unittest discover -s tests -v     # 32 tests, no network needed
+python3 fetch_ms_cf.py contributions --probe --begin 01/01/2022 --end 02/28/2022
+python3 fetch_ms_cf.py discover              # list the ASMX service's operations
+python3 -m unittest discover -s tests -v     # 50 tests, no network needed
 ```
 
+**Nothing cloud-hosted can reach the portal.** The whole `sos.ms.gov` domain is
+behind Akamai, which answers `403 Access Denied` to datacenter addresses. That
+was confirmed from GitHub's hosted runners on 2026-09-25: both `cfportal.` and
+`www.sos.ms.gov` were refused with browser-standard headers. Sandboxed sessions
+are also blocked by their own egress policy. Live runs happen on the user's
+machine. Do not try to route around the block with proxies, IP rotation or
+client fingerprint spoofing; it is a deliberate access control. Verify changes
+with fixture-backed tests, and ask the user to run `--probe` for live checks.
+
 ## The data source
+
+**Coverage is partial. Keep this in mind before promising numbers.** Only
+reports filed *online*, roughly Oct 2016 to Jul 2023, are structured data. The
+SOS switched off online filing in July 2023. Paper filings (all pre-2016, any
+paper filer after that, everything since Jul 2023, and all county/municipal
+filers) are scanned documents only. See README "Coverage".
 
 The portal has no bulk download. Data comes from an undocumented ASMX JSON
 service — see README.md for the full request/response contract. Key facts:
