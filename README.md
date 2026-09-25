@@ -157,8 +157,9 @@ Getting the data is easier in Mississippi. Coverage is far better in Louisiana.
 
 ## Verification status
 
-Parsing, normalization, chunking, WSDL discovery and the writers are covered by
-41 tests with the transport stubbed (`tests/`, stdlib only):
+Parsing, normalization, chunking, WSDL discovery, HTTP error handling and the
+writers are covered by
+50 tests with the transport stubbed (`tests/`, stdlib only):
 
 ```bash
 python3 -m unittest discover -s tests -v

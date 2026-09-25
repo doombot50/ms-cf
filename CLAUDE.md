@@ -18,7 +18,7 @@ artifacts on disk, atomic writes, retry with exponential backoff.
 python3 fetch_ms_cf.py both                  # full pull → data/
 python3 fetch_ms_cf.py contributions --probe --begin 01/01/2022 --end 02/28/2022
 python3 fetch_ms_cf.py discover              # list the ASMX service's operations
-python3 -m unittest discover -s tests -v     # 41 tests, no network needed
+python3 -m unittest discover -s tests -v     # 50 tests, no network needed
 ```
 
 **Sandboxed sessions usually cannot reach `cfportal.sos.ms.gov`.** To exercise the

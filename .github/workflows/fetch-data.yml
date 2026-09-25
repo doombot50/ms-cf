@@ -61,6 +61,25 @@ jobs:
         if: env.MODE == 'full'
         run: python3 fetch_ms_cf.py both --format csv
 
+      - name: Diagnose portal access
+        # Only on failure: show what the portal answers to a plain browser-style
+        # request, and whether the main SOS site behaves the same, so a refusal can
+        # be told apart from a code bug without re-running anything.
+        if: failure()
+        run: |
+          ua="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36"
+          for url in "https://cfportal.sos.ms.gov/online/portal/cf/page/cf-search/Portal.aspx" \
+                     "https://www.sos.ms.gov/"; do
+            echo "=== $url"
+            curl -sS -m 30 -o body.html -D - -A "$ua" \
+              -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" \
+              -H "Accept-Language: en-US,en;q=0.9" "$url" | head -25 || true
+            echo "--- body text (first 600 chars)"
+            { sed -e 's/<[^>]*>/ /g' body.html | tr -s ' \n\r\t' ' ' | head -c 600; } 2>/dev/null || true
+            echo
+            rm -f body.html
+          done
+
       - name: Upload CSVs
         if: env.MODE == 'full'
         uses: actions/upload-artifact@v4
