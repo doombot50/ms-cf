@@ -1,0 +1,74 @@
+# Fetch data — pull MS campaign-finance records on GitHub's runners and publish
+# them as a downloadable artifact.
+#
+# Also the way the live portal gets exercised at all: cfportal.sos.ms.gov is not
+# reachable from the sandboxed dev environments this repo is worked on in, but
+# Actions runners can reach it. So it runs on any push that changes the fetcher
+# as well as on demand.
+#
+#   discover  list the ASMX service's operations and request fields (from its WSDL)
+#   probe     one narrow date window per dataset: schema + two sample rows
+#   full      discover + probe, then the full pull; CSVs uploaded as an artifact
+name: Fetch data
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: What to run
+        type: choice
+        options: [full, probe, discover]
+        default: full
+  push:
+    paths:
+      - fetch_ms_cf.py
+      - .github/workflows/fetch-data.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fetch-data-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      MODE: ${{ inputs.mode || 'full' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Discover service operations
+        if: env.MODE != 'probe'
+        # The WSDL can be switched off server-side; that must never block the data.
+        continue-on-error: true
+        run: python3 fetch_ms_cf.py discover
+
+      - name: Probe schema
+        if: env.MODE != 'discover'
+        # A window inside the Oct 2016 – Jul 2023 online-filing era, so it returns rows.
+        run: |
+          python3 fetch_ms_cf.py contributions --probe --begin 01/01/2022 --end 02/28/2022
+          python3 fetch_ms_cf.py expenditures --probe --begin 01/01/2022 --end 02/28/2022
+
+      - name: Full pull
+        if: env.MODE == 'full'
+        run: python3 fetch_ms_cf.py both --format csv
+
+      - name: Upload CSVs
+        if: env.MODE == 'full'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ms-campaign-finance
+          path: |
+            data/ms_contributions.csv
+            data/ms_expenditures.csv
+            data/ms_service.wsdl
+          if-no-files-found: error
+          retention-days: 30

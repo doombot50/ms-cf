@@ -16,11 +16,23 @@ artifacts on disk, atomic writes, retry with exponential backoff.
 
 ```bash
 python3 fetch_ms_cf.py both                  # full pull → data/
-python3 fetch_ms_cf.py contributions --probe --begin 01/01/2024 --end 01/31/2024
-python3 -m unittest discover -s tests -v     # 32 tests, no network needed
+python3 fetch_ms_cf.py contributions --probe --begin 01/01/2022 --end 02/28/2022
+python3 fetch_ms_cf.py discover              # list the ASMX service's operations
+python3 -m unittest discover -s tests -v     # 41 tests, no network needed
 ```
 
+**Sandboxed sessions usually cannot reach `cfportal.sos.ms.gov`.** To exercise the
+live portal, push a change to `fetch_ms_cf.py` (which triggers the *Fetch data*
+workflow, `.github/workflows/fetch-data.yml`) or dispatch that workflow, then read
+its job logs. Actions runners have open egress.
+
 ## The data source
+
+**Coverage is partial. Keep this in mind before promising numbers.** Only
+reports filed *online*, roughly Oct 2016 to Jul 2023, are structured data. The
+SOS switched off online filing in July 2023. Paper filings (all pre-2016, any
+paper filer after that, everything since Jul 2023, and all county/municipal
+filers) are scanned documents only. See README "Coverage".
 
 The portal has no bulk download. Data comes from an undocumented ASMX JSON
 service — see README.md for the full request/response contract. Key facts:

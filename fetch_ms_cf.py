@@ -38,7 +38,11 @@ Usage
     python3 fetch_ms_cf.py both --begin 01/01/2016 --chunk-years 1
 
     # Look before you leap: one narrow window, print the schema, write nothing.
-    python3 fetch_ms_cf.py contributions --probe --begin 01/01/2024 --end 01/31/2024
+    # Pick a window inside the Oct 2016 - Jul 2023 online-filing era.
+    python3 fetch_ms_cf.py contributions --probe --begin 01/01/2022 --end 02/28/2022
+
+    # List every operation the service publishes, with its request fields.
+    python3 fetch_ms_cf.py discover
 """
 
 import argparse
@@ -53,6 +57,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+import xml.etree.ElementTree as ET
 
 BASE = "https://cfportal.sos.ms.gov"
 PORTAL_URL = f"{BASE}/online/portal/cf/page/cf-search/Portal.aspx"
@@ -139,6 +144,39 @@ def post_search(opener, endpoint, body, timeout=600, retries=4):
             time.sleep(delay)
             delay *= 2
     raise RuntimeError("unreachable")
+
+
+def fetch_wsdl(opener, timeout=90):
+    with opener.open(f"{SERVICE}?WSDL", timeout=timeout) as r:
+        return r.read()
+
+
+_WSDL = "{http://schemas.xmlsoap.org/wsdl/}"
+_XSD = "{http://www.w3.org/2001/XMLSchema}"
+
+
+def parse_wsdl(xml_bytes):
+    """
+    Map each operation an ASMX WSDL publishes to its request field names.
+
+    ASMX emits one portType per protocol (Soap, HttpGet, HttpPost), each repeating
+    the same operations, so names are de-duplicated in first-seen order.  Requests
+    are document/literal: the schema element named after the operation wraps a
+    flat sequence of the fields.
+    """
+    root = ET.fromstring(xml_bytes)
+    fields = {}
+    for schema in root.iter(f"{_XSD}schema"):
+        for el in schema.findall(f"{_XSD}element"):
+            seq = el.find(f"{_XSD}complexType/{_XSD}sequence")
+            fields[el.get("name")] = [] if seq is None else [
+                child.get("name") for child in seq.findall(f"{_XSD}element") if child.get("name")
+            ]
+    ops = {}
+    for port_type in root.iter(f"{_WSDL}portType"):
+        for op in port_type.findall(f"{_WSDL}operation"):
+            ops.setdefault(op.get("name"), fields.get(op.get("name"), []))
+    return ops
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -259,6 +297,13 @@ def columns_of(records):
     return cols
 
 
+def date_span(records):
+    """(earliest, latest) ISO date across records, or None if none parsed."""
+    dates = sorted(r["date"] for r in records
+                   if re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(r.get("date", ""))))
+    return (dates[0], dates[-1]) if dates else None
+
+
 # ──────────────────────────────────────────────────────────────────────────
 # Output
 # ──────────────────────────────────────────────────────────────────────────
@@ -347,7 +392,7 @@ def fetch(dataset, args, opener):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("dataset", choices=["contributions", "expenditures", "both"])
+    ap.add_argument("dataset", choices=["contributions", "expenditures", "both", "discover"])
     ap.add_argument("--begin", help="BeginDate filter, MM/DD/YYYY")
     ap.add_argument("--end", help="EndDate filter, MM/DD/YYYY")
     ap.add_argument("--chunk-years", type=int, default=0,
@@ -361,11 +406,10 @@ def main(argv=None):
     ap.add_argument("--sleep", type=float, default=1.0, help="pause between chunked requests")
     args = ap.parse_args(argv)
 
-    if args.chunk_years and not (args.begin and args.end):
-        if args.chunk_years and args.begin and not args.end:
-            args.end = dt.date.today().strftime("%m/%d/%Y")
-        else:
-            ap.error("--chunk-years needs --begin (and --end, defaulted to today)")
+    if args.chunk_years:
+        if not args.begin:
+            ap.error("--chunk-years needs --begin (--end defaults to today)")
+        args.end = args.end or dt.date.today().strftime("%m/%d/%Y")
 
     targets = ["contributions", "expenditures"] if args.dataset == "both" else [args.dataset]
     os.makedirs(args.out_dir, exist_ok=True)
@@ -373,10 +417,21 @@ def main(argv=None):
     print(f"Opening portal session: {PORTAL_URL}")
     opener = open_session()
 
+    if args.dataset == "discover":
+        wsdl = fetch_wsdl(opener, timeout=args.timeout)
+        ops = parse_wsdl(wsdl)
+        print(f"{SERVICE} publishes {len(ops)} operations:")
+        for name, fields in ops.items():
+            print(f"  {name}({', '.join(fields)})")
+        print(f"  wrote {write_raw(wsdl, os.path.join(args.out_dir, 'ms_service.wsdl'))}")
+        return 0
+
     for dataset in targets:
         rows, raw_parts = fetch(dataset, args, opener)
         records = normalize(rows)
-        print(f"  {dataset}: {len(records):,} records, {len(columns_of(records))} columns")
+        span = date_span(records)
+        print(f"  {dataset}: {len(records):,} records, {len(columns_of(records))} columns"
+              + (f", dated {span[0]} → {span[1]}" if span else ""))
 
         if args.probe:
             print(f"  columns: {', '.join(columns_of(records))}")
